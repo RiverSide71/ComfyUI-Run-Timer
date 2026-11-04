@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-run-timer"
-description = "Timer node for ComfyUI. Shows workflow run time and keeps the times for last five runs."
+description = "A timer node for ComfyUI. Shows workflow run time and keeps the times for last five runs."
 version = "1.0.0"
 license = "MIT" 
 # classifiers = [
