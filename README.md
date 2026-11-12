@@ -12,6 +12,8 @@ Click any button to see that run's time on the clock. You can do this during a r
 
 Only runs that finish successfully are saved. Runs that fail or are interrupted are left out. The history is stored in the node, so it is saved with your workflow and is still there after you reload the page.
 
+If you wish to clear out the history, click the x next to the numbered buttons. It will ask for a confirmation and then clear all timer history.
+
 ### Using the node
 
 1. Double-click an empty spot on the canvas and search for **ComfyUI Run Timer**. It is also in the **utils** category.

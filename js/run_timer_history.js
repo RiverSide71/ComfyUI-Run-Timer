@@ -23,6 +23,8 @@ const { api } = await importComfy("api.js");
 // button (or the green one) to return to the live clock (it also snaps to the
 // new result when the run ends).
 //
+// The × button at the right end of the strip resets all history (asks first, in a popup next to the node).
+//
 // Colors: ice blue by default (DEFAULT_COLOR below). Give the node a color with
 // ComfyUI's node color picker and the clock lettering follows it. 
 // For Matrix Green, set DEFAULT_COLOR to "#00ff41"
@@ -74,7 +76,7 @@ function isOurNode(node) {
 }
 console.info("[Run Timer History] script loaded (pack folder: " + (PACK || "unknown") + ")");
 
-const MIN_W = 130;
+const MIN_W = 140;
 const CLOCK_H = 50;                 // clock area height at scale 1
 const BAR_H = 18;                   // button strip height at scale 1
 const BASE_H = CLOCK_H + BAR_H;     // node height at scale 1
@@ -86,7 +88,7 @@ const M = {
   num: 30, frac: 19, unit: 13, ls: 1, gap: 5,
   unitDx: 2, unitDy: 8, padX: 26,
   dotR: 3.5, dotAt: 11, radius: 8,
-  btnW: 18, btnH: 12, btnGap: 5, btnFont: 9, btnR: 3,
+  btnW: 18, resetW: 14, btnH: 12, btnGap: 5, btnFont: 9, btnR: 3,
 };
 const FONT = "'Consolas','DejaVu Sans Mono',ui-monospace,monospace";
 // The slot of the run in progress (same green as the running status dot).
@@ -301,10 +303,15 @@ function paintBar(node) {
   if (!btns) return;
   const slots = slotsOf(node), dec = decimalsOf(node), run = !!node._rtRunning;
   const dim = dotDim(node);
+  const nHist = getHistory(node).length;
   const sig = slots.map((s) => s.kind + (s.ms != null ? s.ms : "")).join(",") +
-    "|" + node._rtView + "|" + dec + "|" + dim;
+    "|" + node._rtView + "|" + dec + "|" + dim + "|" + nHist;
   if (node._rtBarSig === sig) return;
   node._rtBarSig = sig;
+  if (node._rtResetBtn) {
+    node._rtResetBtn.classList.toggle("empty", nHist === 0);
+    node._rtResetBtn.title = nHist ? "Reset all timer history" : "No history to reset";
+  }
   btns.forEach((b, i) => {
     const s = slots[i], has = s.kind === "done", live = s.kind === "live";
     const on = has && node._rtView === i;
@@ -552,6 +559,95 @@ function clearHistory(node) {
   else { node._rtDisplayMs = lastMsOf(node); syncViewToLatest(node); }
   refreshClock(node);
 }
+// The bar's reset button: wipe all 5 runs and zero the clock (asks first, in a popup next to the node).
+function resetHistory(node) {
+  if (!getHistory(node).length) return;
+  showConfirm(node, () => { setProp(node, LAST_PROP, 0); clearHistory(node); });
+}
+
+// Small confirm popup that opens right under the reset button (the browser's
+// own confirm() always shows at the top of the screen and cannot be moved).
+let _confirmEl = null, _confirmOff = null;
+function closeConfirm() {
+  if (_confirmOff) { _confirmOff(); _confirmOff = null; }
+  if (_confirmEl) { _confirmEl.remove(); _confirmEl = null; }
+}
+// Screen position of the reset button: the DOM button (Nodes 2.0) or the
+// canvas-painted one (classic, via the canvas pan/zoom).
+function resetAnchor(node) {
+  try {
+    if (isVueNodes() && node._rtResetBtn) {
+      const r = node._rtResetBtn.getBoundingClientRect();
+      if (r.width > 0) return { cx: r.left + r.width / 2, top: r.top, bottom: r.bottom };
+    }
+    const cv = app.canvas, ds = cv.ds, box = cv.canvas.getBoundingClientRect();
+    const rr = barRects(node.size[0], node.size[1], faceScale(node))[HISTORY_MAX];
+    const sc = ds.scale;
+    const top = box.top + (node.pos[1] + rr.y + ds.offset[1]) * sc;
+    return {
+      cx: box.left + (node.pos[0] + rr.x + rr.w / 2 + ds.offset[0]) * sc,
+      top, bottom: top + rr.h * sc,
+    };
+  } catch (_e) {
+    return { cx: window.innerWidth / 2, top: window.innerHeight / 2, bottom: window.innerHeight / 2 };
+  }
+}
+function showConfirm(node, onYes) {
+  closeConfirm();
+  const T = tintOf(node);
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;z-index:100000;left:0;top:0;visibility:hidden;box-sizing:border-box;" +
+    "padding:8px 10px;background:#0c0c0e;border:1px solid rgba(" + T.css + ",0.6);border-radius:8px;" +
+    "box-shadow:0 4px 16px rgba(0,0,0,0.5);color:" + T.hex + ";font:12px " + FONT + ";" +
+    "user-select:none;white-space:nowrap;";
+  const msg = document.createElement("div");
+  msg.textContent = "Reset all timer history?";
+  msg.style.cssText = "margin-bottom:7px;";
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex;gap:6px;justify-content:flex-end;";
+  const mk = (label, filled, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.style.cssText = "cursor:pointer;font:inherit;padding:2px 10px;border-radius:4px;outline:none;" +
+      "border:1px solid rgba(" + T.css + ",0.6);" +
+      (filled ? "background:" + T.hex + ";color:#0c0c0e;" : "background:transparent;color:" + T.hex + ";");
+    b.addEventListener("click", (e) => { e.stopPropagation(); closeConfirm(); if (fn) fn(); });
+    return b;
+  };
+  row.appendChild(mk("Cancel", false, null));
+  row.appendChild(mk("Reset", true, onYes));
+  box.appendChild(msg); box.appendChild(row);
+  document.body.appendChild(box);
+  _confirmEl = box;
+
+  // under the button, centred on it; flips above it near the bottom edge; stays on screen
+  const a = resetAnchor(node), bw = box.offsetWidth, bh = box.offsetHeight, m = 8;
+  let x = a.cx - bw / 2;
+  let y = a.bottom + 6;
+  if (y + bh > window.innerHeight - m) y = a.top - 6 - bh;
+  x = Math.max(m, Math.min(window.innerWidth - bw - m, x));
+  y = Math.max(m, y);
+  box.style.left = Math.round(x) + "px";
+  box.style.top = Math.round(y) + "px";
+  box.style.visibility = "visible";
+
+  // dismiss: click elsewhere, Esc, or scrolling/zooming the canvas
+  const onDown = (e) => { if (!box.contains(e.target)) closeConfirm(); };
+  const onKey = (e) => { if (e.key === "Escape") closeConfirm(); };
+  const onWheel = () => closeConfirm();
+  const t = setTimeout(() => {
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("wheel", onWheel, true);
+  }, 0);
+  document.addEventListener("keydown", onKey, true);
+  _confirmOff = () => {
+    clearTimeout(t);
+    document.removeEventListener("pointerdown", onDown, true);
+    document.removeEventListener("wheel", onWheel, true);
+    document.removeEventListener("keydown", onKey, true);
+  };
+}
 function cycleDecimals(node) {
   setProp(node, DEC_PROP, { 0: 2, 2: 3, 3: 0 }[decimalsOf(node)]);
   applyState(node);
@@ -747,6 +843,7 @@ function injectCSS() {
 .pix-rt-btn.live{color:${RUN_COLOR};border-color:${RUN_COLOR};background:rgba(${RUN_RGB},0.22);}
 .pix-rt-btn.live.dim{opacity:.45;}
 .pix-rt-btn.empty{color:#555;border-color:#333;cursor:default;background:transparent;}
+.pix-rt-reset{width:calc(14px * var(--rt-s,1));}
 /* NODES 2.0 title-less float: hide card, frame, footer chip; make the widget
    subtree click-through so drag + right-click reach the canvas. */
 .lg-node:has(.pix-rt-root){background:transparent!important;border:none!important;box-shadow:none!important;}
@@ -779,12 +876,13 @@ function fillTextVC(ctx, text, x, yMid) {
 }
 // Button rects in node-local px. Shared by the painter and the hit test.
 function barRects(w, h, s) {
-  const bw = M.btnW * s, bh = M.btnH * s, gap = M.btnGap * s;
-  const total = HISTORY_MAX * bw + (HISTORY_MAX - 1) * gap;
+  const bw = M.btnW * s, rw = M.resetW * s, bh = M.btnH * s, gap = M.btnGap * s;
+  const total = HISTORY_MAX * (bw + gap) + rw;
   const x0 = (w - total) / 2;
   const y = h - BAR_H * s + (BAR_H * s - bh) / 2;
   const out = [];
   for (let i = 0; i < HISTORY_MAX; i++) out.push({ x: x0 + i * (bw + gap), y, w: bw, h: bh });
+  out.push({ x: x0 + HISTORY_MAX * (bw + gap), y, w: rw, h: bh });   // last rect = reset button
   return out;
 }
 function hitButton(node, pos) {
@@ -809,6 +907,15 @@ function paintLegacyBar(node, ctx, s, w, h, rr) {
   ctx.textAlign = "center";
   ctx.lineWidth = Math.max(1, s);
   rects.forEach((r, i) => {
+    if (i === HISTORY_MAX) {   // reset button
+      const can = getHistory(node).length > 0;
+      ctx.globalAlpha = a0;
+      ctx.beginPath(); rr(r.x, r.y, r.w, r.h, M.btnR * s);
+      ctx.strokeStyle = can ? "rgba(" + T.css + ",0.6)" : "#333"; ctx.stroke();
+      ctx.fillStyle = can ? T.hex : "#555";
+      fillTextVC(ctx, "\u00d7", r.x + r.w / 2, r.y + r.h / 2);
+      return;
+    }
     const sl = slots[i], has = sl.kind === "done", live = sl.kind === "live";
     const on = has && node._rtView === i;
     ctx.globalAlpha = live && dim ? a0 * 0.45 : a0;
@@ -932,6 +1039,13 @@ function buildVueFace(node) {
     bar.appendChild(b);
     node._rtBtns.push(b);
   }
+  const rb = el("button", "pix-rt-btn pix-rt-reset empty");
+  rb.type = "button";
+  rb.tabIndex = -1;
+  rb.textContent = "\u00d7";
+  rb.addEventListener("click", (e) => { e.stopPropagation(); resetHistory(node); });
+  bar.appendChild(rb);
+  node._rtResetBtn = rb;
   screen.appendChild(dot); screen.appendChild(row); screen.appendChild(bar);
   root.appendChild(screen);
   node._pixRtRoot = root; node._pixRtScreen = screen; node._pixRtDot = dot; node._pixRtTime = time;
@@ -962,7 +1076,7 @@ function teardownVueFace(node) {
   node._pixRtWidget = null; node._pixRtRoot = null; node._pixRtScreen = null;
   node._pixRtDot = null; node._pixRtTime = null;
   node._rtNumEls = null; node._rtFracEl = null; node._rtShapeSig = null;
-  node._rtBtns = null; node._rtBarSig = null;
+  node._rtBtns = null; node._rtResetBtn = null; node._rtBarSig = null;
 }
 function useClassicFace(node) {
   // The scale-1 size is also LiteGraph's resize floor: the clock never gets
@@ -1106,7 +1220,7 @@ app.registerExtension({
     nodeType.prototype.onMouseDown = function (e, pos) {
       if (!isVueNodes() && !(e && e.button != null && e.button !== 0)) {
         const i = hitButton(this, pos);
-        if (i >= 0) { pickRun(this, i); return true; }
+        if (i >= 0) { if (i === HISTORY_MAX) resetHistory(this); else pickRun(this, i); return true; }
       }
       return _origMouseDown ? _origMouseDown.apply(this, arguments) : false;
     };

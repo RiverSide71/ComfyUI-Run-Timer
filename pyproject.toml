@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-run-timer"
 description = "A timer node for ComfyUI. Shows workflow run time and keeps the times for last five runs."
-version = "1.0.0"
+version = "1.0.1"
 license = "MIT" 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)
@@ -28,7 +28,7 @@ Documentation = "https://github.com/RiverSide71/comfyui-run-timer/wiki"
 
 [tool.comfy]
 PublisherId = "river-side"
-DisplayName = "comfyui-run-timer"
+DisplayName = "riversidenodes"
 Icon = ""
 includes = [] 
 
